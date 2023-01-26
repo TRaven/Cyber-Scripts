@@ -74,16 +74,24 @@ if __name__ == '__main__':
     
     
     # FINALIZE
+    # Add the input prefix to the secondary file's column headers. If none was input, it doesn't really matter it won't add anything.
     data_2_header_rename = [secondary_prefix + i for i in data_2_lines[0]]
-    header = data_1_lines[0] + data_2_header_rename
+    # Combine the headers from the Primary and Secondary CSVs then write the header to the new CSV.
+    header = data_1_lines[0] + data_2_header_rename    
     csv_complete(header)
+    # Lets iterate through each line in the primary
     for line in data_1_lines[1:]:
         # We will isolate the indicator in the current line
         target = line[header.index(csv_1_header)].lower()
+        # Search the keys we previously extracted from the selected column in the secondary.
         if target in data_2_keys:
+            # If the Primary CSV target is found in the secondary CSV keys, iterate through each row from the secondary CSV.
             for line_2 in data_2_lines[1:]:
+                # Once the target enrichment data from the secondary is found, combine both rows so it shows up as one in the new CSV.
                 if target == line_2[data_2_lines[0].index(csv_2_header)]:
                     line = line + line_2
+        # Write the combined line to the new CSV.
         csv_complete(line)    
-
+    
+    # Once every line has been iterated through and appended where possible, let the user know where the file is!
     print("\nFile created:\n{}".format(end_file))
