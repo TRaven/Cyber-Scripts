@@ -1,6 +1,6 @@
-#Take two CSVs and merge rows by a value.
+#Take multiple CSVs and merge rows by a value.
 #Written By: https://github.com/TRaven/Cyber-Scripts
-#Version: 1 BETA
+#Version: 2 BETA
 
 import csv, sys, os
 from datetime import datetime
@@ -35,61 +35,88 @@ def csv_complete(orderee):
         # Write the rows to the CSV file
         csv_writer.writerow(orderee) 
 
+
 if __name__ == '__main__':
     # Create a file path for the final file. This is the downloads folder.
     file_path = os_identification()
     end_file = name_file()
+    header = []
+    data_lines = []
+
+    # Lets find out how many CSVs we're gonna merge.
+
+    csv_count = 0
+    while csv_count < 2:
+        try:
+            csv_count = int(input('How many CSV files will you merge? [2]: ') or 2)
+        except ValueError:
+            print('Please input a number.')
     # Ask the user for the csv locations as well as the column headers to compare
+
     csv_1 = input(r'Please provide the path to the primary CSV. (i.e. C:\Path\to\file.csv): ')
     csv_1_header = input('\n' + r'Please provide the header to be compared: ')
-    csv_2 = input('\n' + r'Please provide the path to the second CSV. (i.e. C:\Path\to\file.csv): ')
-    csv_2_header = input('\nPlease provide the header to be compared\nPlease note this will work best if these values are unique in the second CSV: ')
-    # It may help to differentiate the primary's columns from the appended secondary data by using a prefix.
-    set_prefix = ''
-    secondary_prefix = ''
-    while set_prefix not in ['Y', 'N']:
-        set_prefix = input('\n' + r'Would you like your secondary column headers to have a prefix? Y/N: ').upper()
-    if set_prefix == 'Y':
-        secondary_prefix = input('\nPlease provide the desired prefix: ') + ' '
-        
+    
+   
+    # Lets start getting the secondary CSVs
+    sec_csv_locations = {}
+    csv_iter_count = 1
+    while csv_iter_count < csv_count:
+        sec_csv_locations[csv_iter_count] = []
+        sec_csv_locations[csv_iter_count].append(input(r'Please provide the path to the next CSV. (i.e. C:\Path\to\file.csv): '))
+        sec_csv_locations[csv_iter_count].append(input('\n' + r'Please provide the header to be compared: '))
+        # It may help to differentiate the primary's columns from the appended secondary data by using a prefix.
+        set_prefix = ''
+        secondary_prefix = ''
+        while set_prefix not in ['Y', 'N']:
+            set_prefix = (input('\n' + r'Would you like these column headers to have a prefix? Y/[N]: ') or 'N').upper()
+        if set_prefix == 'Y':
+            secondary_prefix = input('\nPlease provide the desired prefix: ') + ' '
+        sec_csv_locations[csv_iter_count].append(secondary_prefix)
+        csv_iter_count += 1
+    
     # Open the primary CSV
     data_1 = open(csv_1,encoding='utf_8_sig')
     csv_data_1 = csv.reader(data_1)
     # Make a list of lists of the csv data
-    data_1_lines = list(csv_data_1)
+    data_lines = list(csv_data_1)
     # Find the index for the provided column header for comparison.
-    data_1_column = data_1_lines[0].index(csv_1_header)
+    data_1_column = data_lines[0].index(csv_1_header)
+    # Write the header line from this file to the header variable
+    header = data_lines[0]
     
-    # Open the second CSV.
-    data_2 = open(csv_2,encoding='utf_8_sig')
-    csv_data_2 = csv.reader(data_2)
-    # Make a list of lists of the csv data
-    data_2_lines = list(csv_data_2)
-    # Find the index for the provided column header for comparison.
-    data_2_column = data_2_lines[0].index(csv_2_header)
-    # Lets make the later searching easier on the system by creating a list of the comparison data from the second sheet.
-    data_2_keys = []
-    for line in data_2_lines[1:]:
-        data_2_keys.append(line[data_2_lines[0].index(csv_2_header)])
+    csv_iter_count = 1
+    while csv_iter_count < csv_count:
+        # Open the second CSV.
+        data_2 = open(sec_csv_locations[csv_iter_count][0],encoding='utf_8_sig')
+        csv_data_2 = csv.reader(data_2)
+        # Make a list of lists of the csv data
+        data_2_lines = list(csv_data_2)
+        # Find the index for the provided column header for comparison.
+        data_2_column = data_2_lines[0].index(sec_csv_locations[csv_iter_count][1])
+        # Lets make the later searching easier on the system by creating a list of the comparison data from the second sheet.
+        data_2_keys = []
+        for line in data_2_lines[1:]:
+            data_2_keys.append(line[data_2_lines[0].index(sec_csv_locations[csv_iter_count][1])])
+        # Add the input prefix to the secondary file's column headers. If none was input, it doesn't really matter it won't add anything.
+        data_2_header_rename = [sec_csv_locations[csv_iter_count][2] + i for i in data_2_lines[0]]
+        # Combine the headers from the Primary and Secondary CSVs.
+        header += data_2_header_rename
+        # Lets iterate through each line in the primary
+        line_iter_count = 1
+        for line in data_lines[1:]:
+            # We will isolate the indicator in the current line
+            target = line[header.index(csv_1_header)].lower()
+            # Search the keys we previously extracted from the selected column in the secondary.
+            if target in data_2_keys:
+                # If the Primary CSV target is found in the secondary CSV keys, iterate through each row from the secondary CSV.
+                for line_2 in data_2_lines[1:]:
+                    # Once the target enrichment data from the secondary is found, combine both rows so it shows up as one in the new CSV.
+                    if target == line_2[data_2_lines[0].index(sec_csv_locations[csv_iter_count][1])]:
+                        data_lines[line_iter_count] += line_2
+            line_iter_count += 1
+        csv_iter_count += 1
     
-    
-    # FINALIZE
-    # Add the input prefix to the secondary file's column headers. If none was input, it doesn't really matter it won't add anything.
-    data_2_header_rename = [secondary_prefix + i for i in data_2_lines[0]]
-    # Combine the headers from the Primary and Secondary CSVs then write the header to the new CSV.
-    header = data_1_lines[0] + data_2_header_rename    
-    csv_complete(header)
-    # Lets iterate through each line in the primary
-    for line in data_1_lines[1:]:
-        # We will isolate the indicator in the current line
-        target = line[header.index(csv_1_header)].lower()
-        # Search the keys we previously extracted from the selected column in the secondary.
-        if target in data_2_keys:
-            # If the Primary CSV target is found in the secondary CSV keys, iterate through each row from the secondary CSV.
-            for line_2 in data_2_lines[1:]:
-                # Once the target enrichment data from the secondary is found, combine both rows so it shows up as one in the new CSV.
-                if target == line_2[data_2_lines[0].index(csv_2_header)]:
-                    line = line + line_2
+    for line in data_lines:
         # Write the combined line to the new CSV.
         csv_complete(line)    
     
