@@ -96,7 +96,7 @@ if __name__ == '__main__':
         # Lets make the later searching easier on the system by creating a list of the comparison data from the second sheet.
         data_2_keys = []
         for line in data_2_lines[1:]:
-            data_2_keys.append(line[data_2_lines[0].index(sec_csv_locations[csv_iter_count][1])])
+            data_2_keys.append(line[data_2_lines[0].index(sec_csv_locations[csv_iter_count][1])].lower())
         # Add the input prefix to the secondary file's column headers. If none was input, it doesn't really matter it won't add anything.
         data_2_header_rename = [sec_csv_locations[csv_iter_count][2] + i for i in data_2_lines[0]]
         # Combine the headers from the Primary and Secondary CSVs.
@@ -111,7 +111,7 @@ if __name__ == '__main__':
                 # If the Primary CSV target is found in the secondary CSV keys, iterate through each row from the secondary CSV.
                 for line_2 in data_2_lines[1:]:
                     # Once the target enrichment data from the secondary is found, combine both rows so it shows up as one in the new CSV.
-                    if target == line_2[data_2_lines[0].index(sec_csv_locations[csv_iter_count][1])]:
+                    if target == line_2[data_2_lines[0].index(sec_csv_locations[csv_iter_count][1])].lower():
                         data_lines[line_iter_count] += line_2
             line_iter_count += 1
         csv_iter_count += 1
