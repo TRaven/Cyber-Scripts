@@ -2,7 +2,6 @@
 #Written By: https://github.com/TRaven/Cyber-Scripts
 #Version: 2 BETA
 
-from collections import Counter
 import csv, sys, os
 from datetime import datetime
 
