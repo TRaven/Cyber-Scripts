@@ -2,13 +2,12 @@
 #Written By: https://github.com/TRaven/Cyber-Scripts
 #Version: 2 BETA
 
-from requests import get
 from ipaddress import ip_address, ip_network
 from ipwhois import IPWhois
 from datetime import datetime
 from tqdm import tqdm
 from OTXv2 import OTXv2, IndicatorTypes
-import socket, json, re, csv, os, sys, whois
+import re, csv, os, sys, whois
 
 # OTX API Key for the OTX search. Create a free OTX account to get a key.
 otx = OTXv2("ALIENVAULT_OTX_API_KEY")
@@ -228,7 +227,6 @@ def not_enriched(whois_results):
             otx_malware_families = []
             if query_selection == '1':
                 whois_indicator = whois_hit
-                print(whois_indicator)
                 otx_indicator_url = 'https://otx.alienvault.com/indicator/ip/' + whois_indicator
             elif query_selection == '2':
                 if type(whois_results[whois_hit]['domain_name']) == list:
