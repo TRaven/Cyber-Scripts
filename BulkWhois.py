@@ -1,13 +1,14 @@
 #This script will take a CSV column or a list of IPs to perform whois queries on them.
 #Written By: https://github.com/TRaven/Cyber-Scripts
-#Version: 1.4 BETA
+#Version: 2 BETA
 
 from requests import get
+from ipaddress import ip_address, ip_network
 from ipwhois import IPWhois
 from datetime import datetime
 from tqdm import tqdm
 from OTXv2 import OTXv2, IndicatorTypes
-import socket, re, json, csv, os, sys, whois
+import socket, json, re, csv, os, sys, whois
 
 # OTX API Key for the OTX search. Create a free OTX account to get a key.
 otx = OTXv2("ALIENVAULT_OTX_API_KEY")
@@ -42,12 +43,18 @@ def csv_complete(orderee):
         # Write the rows to the CSV file
         csv_writer.writerow(orderee)            
 
-# Here we will perform the OTX lookup
 def otx_lookup(data_list):
     global otx_results
     print('\nPerforming OTX lookup on {} unique {}s:'.format(len(data_list),query_type[query_selection]))
     for indicator in tqdm(data_list):
-        if not re.match(r'^10\.|^192\.168\.|^172.(1[6-9]|2[0-9]|3[01])\.', indicator):
+        if query_selection == '1':
+            if ip_address(indicator).is_global == True:
+                try:
+                    response = otx.get_indicator_details_full(getattr(IndicatorTypes, query_type[query_selection]), indicator)
+                    otx_results.append(response)
+                except:
+                    continue
+        elif query_selection == '2':
             try:
                 response = otx.get_indicator_details_full(getattr(IndicatorTypes, query_type[query_selection]), indicator)
                 otx_results.append(response)
@@ -58,38 +65,58 @@ def otx_lookup(data_list):
 # This function performs the WHOIS lookup.
 def whois_lookup(data_list):
     global whois_results
-    global found_entity
     print('\nPerforming WHOIS on {} unique {}s:'.format(len(data_list),query_type[query_selection]))
-    # Run this if IP is selected as an option
+    # Query selection 1 is IPv4
     if query_selection == '1':
         for ip in tqdm(data_list):
-            # We only want to search non-private IPs
-            if not re.match(r'^10\.|^192\.168\.|^172.(1[6-9]|2[0-9]|3[01])\.', ip):
-                try:
-                    obj = IPWhois(ip)
-                    response = obj.lookup_rdap(asn_methods=["whois"])
-                    whois_results.append(response)
-                    found_entity.append(response['query'])
-                except:
-                    continue
-    # Run this is Domain is selected as an option.
+            identified = False
+            # We only want to search public IPs
+            if ip_address(ip).is_global == True:
+                # If quick searching is enabled, we will try to see if the subnet has already been queried that way we save query time by using data already pulled.
+                if ip_quick_search == 'Y':
+                    count = 0
+                    while count < len(whois_results.keys()):
+                        try:
+                            # Look at each cidr in the whois results dictionary until you find it. If you find it, we break out of the loop. If not, the next steps are teaken.
+                            for entry in whois_results:
+                                # Let's check if the ip in question has been identifed before the current loop, if so, stop, no more!!!
+                                if identified == True:
+                                    break
+                                # If we're still not identified, lets go and iterate through each entry until we find a CIDR which the current IP matches.
+                                else:
+                                    # find a CIDR
+                                    network = whois_results[entry]['asn_cidr']
+#TEST                                    print("Identified {}. Checking {} against {} from {}".format(str(identified), ip, network, entry))
+                                    # If the IP is in the current CIDR, "identified" will be true.
+                                    identified = ip_address(ip) in ip_network(network)
+                                    count += 1
+                                    # If identified becomes true, we'll add the relevant WHOIS result to the IP's entry in the dictionary.
+                                    if identified == True:
+#TEST                                        print("Skipping {}".format(ip))
+                                        whois_results[ip] = whois_results[entry]
+                            break
+                        except:
+                            continue
+                # If the ip didn't match up with one of the CIDRs already queried, lets run the whois.
+                if identified == False:
+                    try:
+                        obj = IPWhois(ip)
+                        response = obj.lookup_rdap(asn_methods=["whois"])
+                        whois_results[ip] = response
+                    except:
+                        continue
+    # Query selection 2 is Domain lookup.
     elif query_selection == '2':
         for domain in tqdm(data_list):
             try:
                 query = whois.whois(domain)
-                whois_results.append(query)
-                if type(query['domain_name']) == list:
-                    entity = query['domain_name'][0].lower()
-                elif type(query['domain_name']) == str:
-                    entity = query['domain_name'].lower()
-                found_entity.append(entity)
+                whois_results[domain] = query
             except:
-                print('DOMAIN WHOIS ERROR')
+                print('\n\nDOMAIN WHOIS ERROR\n\n')
                 continue
     else:
         print("\nSomething went wrong and I don't know what you want me to query.")
         sys.exit()
-        
     return whois_results
 
 # If the user chooses to enrich their existing CSV file, the data will be assembled here.
@@ -97,7 +124,7 @@ def data_enricher(whois_results):
     # Firest we'll take the first line (header) of the original file and store it as header
     header = orig_data_lines[0]
     # Now we'll add all of the keys from the WHOIS results to a list
-    whois_keys = list(whois_results[0].keys())
+    whois_keys = list(list(whois_results.items())[0][1].keys())
     # Let's make it easier to determine what column the whois results apply to.
     # We'll iterate through each whois_key
     for element in whois_keys:
@@ -122,26 +149,26 @@ def data_enricher(whois_results):
         # We will isolate the indicator in the current line
         target = line[header.index(column_header)].lower()
         # Search for the indicator in the list of IPs created when we got results from whois
-        if target in found_entity:
+        if target in whois_results.keys():
             # If the IP in the original CSV was found by whois, iterate through the whois results to find the whois reply
             for whois in whois_results:
                 if query_selection == '1':
-                    if whois['query'] == target:
+                    if whois == target:
                         # Once we found the WHOIS for the appropriate IP, we'll add the values for the whois dictionary as columns to the row. These should all fall under the appropriate column once complete.
-                        line.extend(list(whois.values()))
+                        line.extend(list(whois_results[whois].values()))
                         # Also extract the street address associated with the IP and add it to the appropriate column
                         try:
                             line.insert(header.index(column_header + ' Address'), list(whois['objects'].values())[0]['contact']['address'][0]['value'])
                         except:
                             line.insert(header.index(column_header + ' Address'), '')
                 elif query_selection == '2':
-                    if type(whois['domain_name']) == list:
-                        whois_indicator = whois['domain_name'][0].lower()
-                    elif type(whois['domain_name']) == str:
-                        whois_indicator = whois['domain_name'].lower()
+                    if type(whois_results[whois]['domain_name']) == list:
+                        whois_indicator = whois_results[whois]['domain_name'][0].lower()
+                    elif type(whois_results[whois]['domain_name']) == str:
+                        whois_indicator = whois_results[whois]['domain_name'].lower()
                     if whois_indicator == target:
                         # Once we found the WHOIS for the appropriate IP, we'll add the values for the whois dictionary as columns to the row. These should all fall under the appropriate column once complete.
-                        line.extend(list(whois.values()))
+                        line.extend(list(whois_results[whois].values()))
                         # Also extract the street address associated with the IP and add it to the appropriate column
                         
         # If the IP was not found by WHOIS, we'll try to add some context.
@@ -151,7 +178,7 @@ def data_enricher(whois_results):
                 line.append('')
             # As the whois function is written to ignore private IPs, lets add to the description column that htis is a private IP.
             if query_selection == '1':
-                if re.match(r'^10\.|^192\.168\.|^172.(1[6-9]|2[0-9]|3[01])\.', target):
+                if ip_address(target).is_private == True:
                     line.insert(header.index(column_header + ' asn_description'), 'THIS IS A PRIVATE IP')
                 # Any other scenario will get a simple no whois information description.
                 else:
@@ -178,9 +205,10 @@ def not_enriched(whois_results):
         # This first IF will define and write the header of the CSV file
         if count == 0:
             # Make the dictionary values into a list so we can modify the contents of the header.
-            header = list(whois_hit.keys())
+            header = list(whois_results[whois_hit].keys())
             # Create additional headers for IP searches
             if query_selection == '1':
+                header.insert(0, 'PROVIDED IP ADDRESS')
                 header.insert(header.index('asn_country_code'), 'Address')
             # Create additional Headers for OTX enrichment
             if otx_selection == 'Y':
@@ -188,23 +216,25 @@ def not_enriched(whois_results):
                 header.extend(otx_headers)
             csv_complete(header)
             count += 1
-        the_values = list(whois_hit.values())
+        the_values = list(whois_results[whois_hit].values())
         if query_selection == '1':
             try:
-                the_values.insert(header.index('Address'), list(whois_hit['objects'].values())[0]['contact']['address'][0]['value'])
+                the_values.insert(0, whois_hit)
+                the_values.insert(header.index('Address'), list(whois_results[whois_hit]['objects'].values())[0]['contact']['address'][0]['value'])
             except:
                 continue
         # Start OTX Enrichment
         if otx_selection == 'Y':
             otx_malware_families = []
             if query_selection == '1':
-                whois_indicator = whois_hit['query']
+                whois_indicator = whois_hit
+                print(whois_indicator)
                 otx_indicator_url = 'https://otx.alienvault.com/indicator/ip/' + whois_indicator
             elif query_selection == '2':
-                if type(whois_hit['domain_name']) == list:
-                    whois_indicator = whois_hit['domain_name'][0].lower()
-                elif type(whois_hit['domain_name']) == str:
-                    whois_indicator = whois_hit['domain_name'].lower()
+                if type(whois_results[whois_hit]['domain_name']) == list:
+                    whois_indicator = whois_results[whois_hit]['domain_name'][0].lower()
+                elif type(whois_results[whois_hit]['domain_name']) == str:
+                    whois_indicator = whois_results[whois_hit]['domain_name'].lower()
                 otx_indicator_url = 'https://otx.alienvault.com/indicator/domain/' + whois_indicator
             for otx_hit in otx_results:
                 if whois_indicator == otx_hit['general']['indicator'].lower():
@@ -238,21 +268,27 @@ if __name__ == '__main__':
     source_type = {'1':'Manually Input','2':'Existing CSV'}
     print('\nWhat do you want to query?')
     query_selection = option_display(query_type)
+    ip_quick_search = ''
+    if query_selection == '1':
+        while ip_quick_search not in ['Y', 'N']:
+            ip_quick_search = (input('\nWould you like to perform a quick IP search? Whois Data for previously queried CIDRs will be used for subsequent IPs ([Y]/N): ') or 'Y').upper()
     otx_selection = ''
     while otx_selection not in ['Y', 'N']:
-        otx_selection = input('\nWould you like to search Alienvault OTX for Threat Intel? (Y/N): ').upper()
+        otx_selection = (input('\nWould you like to search Alienvault OTX for Threat Intel? (Y/[N]): ') or 'N').upper()
     print('\nPlease select {} source: '.format(query_type[query_selection]))
     source_selection = option_display(source_type)
-    whois_results = []
+    whois_results = {}
     otx_results = []
     orig_data_lines = []
     column_header = ''
-    found_entity = []
     end_file = ''
     file_path = ''
     enrich_data = ''
     # Start a list for the final Public IPs to be stored in.
     data_list = []
+    
+
+            
     
     # Here are the actions performed if user chose to manually input indicators (source 1).
     if source_selection == '1':
@@ -281,7 +317,7 @@ if __name__ == '__main__':
         # Name the file the original filename with _WHOIS_Lookup appended.
         end_file = re.sub(r"^(.*?)(.csv)",r"\1_WHOIS_Lookup\2",original_file)
         while enrich_data not in ['Y', 'N']:            
-            enrich_data = input('\nWould you like to enrich your existing data with lookup information? (Y/N): ').upper()
+            enrich_data = (input('\nWould you like to enrich your existing data with lookup information? ([Y]/N): ') or 'Y').upper()
         
 
         # Read the original file. 
