@@ -1,8 +1,8 @@
 #This script will take a list of IP ranges and find the CIDR ranges that apply to the range.
 #Written By: https://github.com/TRaven/Cyber-Scripts
-#Version: 1 Alpha
+#Version: 1 beta
 
-import netaddr, argparse, sys, os, csv
+import argparse, sys, os, csv, ipaddress, re
 from datetime import datetime
 from tqdm import tqdm
 
@@ -50,11 +50,13 @@ def guided_mode():
     address_range = str
     source_type = {'1':'Manually Input','2':'Existing TXT/CSV'}
     source_selection = int
-    
+    expanded = ''
     # Ask they user where the ranges are coming from based on the contents of source_type above.
     print('\nPlease select range source: ')
     while source_selection not in [1, 2]:
         source_selection = int(option_display(source_type))
+    while expanded not in ['Y', 'N']:
+            expanded = (input('\nWould you like to see all possible subnets? This will take (Y/[N]): ') or 'N').upper()
     # If we're Manually inputting
     if source_selection == 1:
         address_range = input('Input a space separated list of ranges (i.e. 172.16.0.0-172.16.0.255 192.168.0.0-192.168.0.255): ' )
@@ -84,7 +86,7 @@ def open_file(original_file):
 
 # This function will dictate how we leverage and uiltimately write a CSV file.
 # We will take the original CSV and insert our enriched data to the original.
-def csv_file_read(original_file, column):
+def csv_file_read(original_file, column, expanded):
     # Read the CSV Data
     csv_data = csv.reader(open_file(original_file))
     # Make a list of lists of the csv data
@@ -117,13 +119,17 @@ def csv_file_read(original_file, column):
             try:
                 # If the range contains two IP addresses, lets use them as the first and last item of the range.
                 if len(address_range_split) == 2:
-                    found_cidr = netaddr.cidr_merge(netaddr.iter_iprange(address_range_split[0], address_range_split[1]))
+                    found_cidr = cidr_find(address_range_split[0], address_range_split[1], expanded)
                 # Sometimes there will be a single IP with no range. If that's the case, just use it as the first and last IP in the range and provide a /32 i guess!
                 elif len(address_range_split) == 1:
-                    found_cidr = netaddr.cidr_merge(netaddr.iter_iprange(address_range_split[0], address_range_split[0]))
+                    found_cidr = cidr_find(address_range_split[0], address_range_split[1], expanded)
                 # Once the CIDRs are found, we can go through and add them to the string block that will be written to the column eventually.
-                for cidr in found_cidr:
-                    the_cidr += str(cidr) + '\n'
+                
+                if type(found_cidr) == list:
+                    for cidr in found_cidr:
+                        the_cidr += str(cidr) + '\n'
+                else:
+                    the_cidr += str(found_cidr) + '\n'
             # If there's an exception, just continue; don't kill the script..
             except:
                 continue
@@ -135,7 +141,7 @@ def csv_file_read(original_file, column):
         csv_complete(line)
             
     
-def txt_file_read(original_file):
+def txt_file_read(original_file, expanded):
     # open the txt file
     txt_data = open_file(original_file)
     # Read the txt file
@@ -143,9 +149,9 @@ def txt_file_read(original_file):
     # Here we will add all of the ranges in new lines to a list. We'll also kill any uneccessary white space.
     txt_data_list = [(x.strip() and x.replace(' ', '')) for x in the_data.split('\n')]
     # Send these ranges through the CIDR matchup funciton.
-    cidr_matchup(txt_data_list)
+    cidr_matchup(txt_data_list, expanded)
 
-def cidr_matchup(address_range):
+def cidr_matchup(address_range, expanded):
     cidr_obj_list = {}
     print('Finding CIDRs ')
     # Iterate through each range in the list.
@@ -154,10 +160,10 @@ def cidr_matchup(address_range):
         address_range_split = r.split('-')
         # If the range contains two IP addresses, lets use them as the first and last item of the range.
         if len(address_range_split) == 2:
-            cidr_obj_list[r] = netaddr.cidr_merge(netaddr.iter_iprange(address_range_split[0], address_range_split[1]))
+            cidr_obj_list[r] = [cidr_find(address_range_split[0], address_range_split[1], expanded)]
         # Sometimes there will be a single IP with no range. If that's the case, just use it as the first and last IP in the range and provide a /32 i guess!
         elif len(address_range_split) == 1:
-            found_cidr = netaddr.cidr_merge(netaddr.iter_iprange(address_range_split[0], address_range_split[0]))
+            cidr_obj_list[r] = [cidr_find(address_range_split[0], address_range_split[0], expanded)]
     
     # Lets create then write the header to the new CSV.
     header = ['PROVIDED RANGE','CIDR']
@@ -182,6 +188,68 @@ def cidr_matchup(address_range):
         # Write this row!
         csv_complete(line)
 
+def cidr_find(address_1, address_2, expanded):
+    # if the user wants all of the broken down subnets, this simple piece will run.
+    if expanded == (True or 'Y'):
+        cidr = [ipaddr for ipaddr in ipaddress.summarize_address_range(ipaddress.IPv4Address(address_1), ipaddress.IPv4Address(address_2))]
+    # Ironically, for a smaller simpler number of subnets reperesented, we need more code.
+    else:
+        # Convert these into a binary representation of the IP addresses.
+        address_1_bin = '{0:b}'.format(int(ipaddress.ip_address(address_1)))
+        address_2_bin = '{0:b}'.format(int(ipaddress.ip_address(address_2)))
+        # Sometimes the first octet will be shorter because leading 0s arent present. Let's fix that in the string.
+        if len(address_1_bin) < 32:
+            adjust = 32 - len(address_1_bin)
+            address_1_bin = ('0' * adjust) + address_1_bin
+
+        if len(address_2_bin) < 32:
+            adjust = 32 - len(address_2_bin)
+            address_2_bin = ('0' * adjust) + address_2_bin
+        # Find the CIDR mask.
+        cidr_mask = find_cidr_mask(address_1_bin, address_2_bin)
+        # Calculate the network address using the first ip's binary and the cidr mask.
+        network_address = find_network_address(address_1_bin, cidr_mask)
+        # Combine the network address and cidr mask to get the final Subnet CIDR notation.
+        cidr = network_address + '/' + str(cidr_mask)
+    return cidr
+
+def find_cidr_mask(address_1_bin, address_2_bin):
+    
+    subnet_mask_bin = ''
+    # We wil compare each binary digit of the First and Last IP in the range to create a binary subnet mask.
+    count = 0
+    while count < 32:
+        subnet_mask_bin += str(int(address_1_bin[count]) ^ int(address_2_bin[count]))
+        count += 1
+    # Now we'll grab the beginning set of 0s from the subnet mask binary and count them to find the CIDR mask.
+    cidr_mask = len(re.sub(r"^(0+).*?$",r'\1',subnet_mask_bin))
+    return cidr_mask
+
+def find_network_address(address_1_bin, cidr_mask):
+    network_address = ''
+    # The binary representation of the network address will be the first IP's first binary digits up to the cidr mask count.
+    network_bin = address_1_bin[0:int(cidr_mask)]
+    # Now we will split this up into octets
+    network_bin = '.'.join(network_bin[i:i+8] for i in range(0, len(network_bin), 8))
+    # Now we will take these octets and split them into a list.
+    network_bin_split = network_bin.split(".")
+    # Here we will build the network address in decimal from the binary inputs.
+    # First we will make sure that the octets are 8 bits in length by adding 0s on any short octet. Typically this will be the last octet in the subnet mask.
+    # The first octet (when the count is still 0) will just be the decimal number. The subsequent octets will start with a period in order to give the correct IP notation.
+    count = 0
+    for i in network_bin_split:
+        if count == 0:
+            network_address = str(int(i.ljust(8, '0'),2))
+        else:
+            network_address += ('.' + str(int(i.ljust(8, '0'),2)))
+        count += 1
+    # Obviously, the network address will typically start off with less than 4 octets. If this is the case, we must add .0 to the end of the network address until we have 4 octets.
+    if len(network_bin_split) < 4:
+        network_address += '.0' * (4-len(network_bin_split))
+    
+    # once all is done, we will return the complete network address!
+    return network_address
+
 if __name__ == '__main__':
     # See what OS the user is using in order to find the right file path to use.
     file_path = os_identification()
@@ -198,6 +266,7 @@ if __name__ == '__main__':
     parser.add_argument('-r', '--range', help='Input a space separated list of ranges to review (i.e. 172.16.0.0-172.16.0.255 192.168.0.0-192.168.0.255)', nargs='*')
     parser.add_argument('-f', '--file', help='Use a TXT or CSV file that contains a column with ranges. If you get an error, try enclosing path in quotes.')
     parser.add_argument('-c', '--column', help='When using a CSV file, provide the column header where the ranges will be located.')
+    parser.add_argument('-e','--expanded', help='Finds more subnets.', action='store_true')
     parser.add_argument('-g', '--guided', help='This will send you through a step by step guided mode.', action='store_true')
     args = parser.parse_args()
     
@@ -213,13 +282,14 @@ if __name__ == '__main__':
             address_range = args.range
             cidr_matchup(address_range)
         elif not args.file is None:
+            #If a file is given, let's check and make sure it's a CSV or a TXT and get what we need from those.
             if args.file[-4:].lower() == '.csv':
                 if args.column is None:
                     parser.error('A CSV file requries the -c COLUMN to be defined.')
                 else:
-                    csv_file_read(args.file, args.column)
+                    csv_file_read(args.file, args.column, args.expanded)
             elif args.file[-4:].lower() == '.txt':
-                txt_file_read(args.file)
+                txt_file_read(args.file, args.expanded)
             else:
                 parser.error('Please provide a TXT file with ranges in new lines or a CSV file with the column containing ranges.')
     # If no arguments are given, just run the guided mode.
