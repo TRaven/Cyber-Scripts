@@ -180,7 +180,11 @@ def cidr_matchup(address_range, expanded):
         the_cidr = ''
         # Iterate through each value for each key adding it to a string block and add a new line at the end of each.
         for cidr in cidr_obj_list[obj]:
-            the_cidr += str(cidr) + '\n'
+            if type(cidr) == list:
+                for i in cidr:
+                    the_cidr += str(i) + '\n'
+            else:
+                the_cidr += str(cidr) + '\n'
         # Once all of the ranges have been reviewed and all of the CIDRs written to the CIDR block, you will have a new line at the end of it. Remove it.
         the_cidr = the_cidr.rstrip('\n')
         # Add the found CIDRs to the CIDR column for the row.
@@ -280,7 +284,7 @@ if __name__ == '__main__':
             guided_mode()
         elif not args.range is None:
             address_range = args.range
-            cidr_matchup(address_range)
+            cidr_matchup(address_range, args.expanded)
         elif not args.file is None:
             #If a file is given, let's check and make sure it's a CSV or a TXT and get what we need from those.
             if args.file[-4:].lower() == '.csv':
